@@ -1,6 +1,6 @@
 # Bora Cuidar Backend
 
-Backend Node/Express do Bora Cuidar para criacao e validacao server-side de agendamentos.
+Backend Node/Express do Bora Cuidar para criacao e validacao server-side de agendamentos e acesso autenticado do app profissional.
 
 ## Stack
 
@@ -11,7 +11,12 @@ Backend Node/Express do Bora Cuidar para criacao e validacao server-side de agen
 
 ## Estrutura
 
-- `src/`: codigo da API
+- `src/index.js`: bootstrap do servidor
+- `src/app.js`: composicao do Express e montagem das rotas
+- `src/config/`: configuracao compartilhada, incluindo Firebase Admin
+- `src/features/boracuidar-web/`: rotas do site publico/marketplace
+- `src/features/boracuidar/`: rotas do app profissional
+- `src/middleware/`: middlewares compartilhados
 - `Dockerfile`: imagem para deploy
 - `docs/BOOKING_BACKEND.md`: documentacao operacional do fluxo de agendamento
 
@@ -35,11 +40,34 @@ Healthcheck:
 GET /health
 ```
 
-Endpoint principal:
+Endpoints de agendamento preservados:
 
 ```bash
+GET /api/bookings/bootstrap
+GET /api/bookings/availability
 POST /api/bookings/create
 ```
+
+Os mesmos handlers tambem estao disponiveis no namespace novo:
+
+```bash
+GET /api/boracuidar-web/bookings/bootstrap
+GET /api/boracuidar-web/bookings/availability
+POST /api/boracuidar-web/bookings/create
+```
+
+Endpoints autenticados do app profissional:
+
+```bash
+POST /api/boracuidar/firestore/query
+POST /api/boracuidar/firestore/collection-group-query
+POST /api/boracuidar/firestore/insert
+POST /api/boracuidar/firestore/upsert
+PATCH /api/boracuidar/firestore/update
+DELETE /api/boracuidar/firestore/delete
+```
+
+Essas rotas exigem `Authorization: Bearer <firebase_id_token>`.
 
 ## Deploy no Cloud Run
 
