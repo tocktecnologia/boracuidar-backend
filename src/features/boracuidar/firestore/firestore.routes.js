@@ -132,12 +132,18 @@ function buildQuery(ref, { conditions = [], orders = [], limit = null }) {
     query = query.orderBy(order.field, order.ascending === false ? "desc" : "asc");
   }
 
-  const normalizedLimit = Number(limit);
-  if (Number.isInteger(normalizedLimit) && normalizedLimit >= 0) {
+  const normalizedLimit = normalizeLimit(limit);
+  if (normalizedLimit != null) {
     query = query.limit(normalizedLimit);
   }
 
   return query;
+}
+
+function normalizeLimit(limit) {
+  if (limit == null || limit === "") return null;
+  const normalizedLimit = Number(limit);
+  return Number.isInteger(normalizedLimit) && normalizedLimit >= 0 ? normalizedLimit : null;
 }
 
 function decodeValue(value) {
@@ -168,6 +174,131 @@ function decodeDoc(table, snapshot) {
     data[stringPkField] = snapshot.id;
   }
   return data;
+}
+
+function primaryKeyFieldForTable(table) {
+  if (NUMERIC_ID_TABLES.has(table)) return "id";
+  return STRING_PRIMARY_KEY_BY_TABLE.get(table) || null;
+}
+
+function documentIdsFromPrimaryKeyConditions(table, conditions) {
+  const primaryKeyField = primaryKeyFieldForTable(table);
+  if (!primaryKeyField) return null;
+
+  const primaryKeyConditions = conditions.filter((condition) => condition.field === primaryKeyField);
+  if (primaryKeyConditions.length === 0) return null;
+
+  let ids = null;
+  for (const condition of primaryKeyConditions) {
+    let nextIds = null;
+    switch (condition.operator) {
+      case "eq":
+        nextIds = [condition.value];
+        break;
+      case "inFilter":
+        nextIds = Array.isArray(condition.value) ? condition.value : [];
+        break;
+      default:
+        return null;
+    }
+
+    const normalized = nextIds
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
+    ids = ids == null ? normalized : ids.filter((id) => normalized.includes(id));
+  }
+
+  return [...new Set(ids ?? [])];
+}
+
+async function queryDocRowsByDocumentId({ table, conditions, orders, limit }) {
+  const documentIds = documentIdsFromPrimaryKeyConditions(table, conditions);
+  if (documentIds == null) return null;
+  if (documentIds.length === 0) return [];
+
+  const snapshots = await Promise.all(
+    documentIds.map((documentId) => db.collection(table).doc(documentId).get()),
+  );
+  const docRows = snapshots
+    .filter((snapshot) => snapshot.exists)
+    .map((snapshot) => ({
+      ref: snapshot.ref,
+      data: decodeDoc(table, snapshot),
+    }));
+
+  return filterAndSortDocRows(docRows, { conditions, orders, limit });
+}
+
+function hasUsableFallbackValue(condition) {
+  if (condition.value == null) return false;
+  if ((condition.operator === "inFilter" || condition.operator === "overlaps") && Array.isArray(condition.value)) {
+    return condition.value.length > 0;
+  }
+  return true;
+}
+
+function conditionFallbackRank(table, condition) {
+  const field = condition.field;
+  if (table === "agendamentos" && field === "data_agendamento" && condition.operator === "eq") return 0;
+  if (field === "business_id") return 1;
+  if (table === "agendamentos" && field === "data_agendamento") return 2;
+  if (field === "email") return 3;
+  if (field === primaryKeyFieldForTable(table)) return 4;
+  return 10;
+}
+
+function reducedConditionSets(table, conditions, hasOrders) {
+  const sets = [];
+  const seen = new Set();
+  const addSet = (nextConditions) => {
+    if (nextConditions.length === 0) return;
+    const key = JSON.stringify(nextConditions.map((condition) => ({
+      field: condition.field,
+      operator: condition.operator,
+      value: condition.value,
+    })));
+    if (seen.has(key)) return;
+    seen.add(key);
+    sets.push(nextConditions);
+  };
+
+  if (hasOrders) {
+    addSet(conditions);
+  }
+
+  const candidates = conditions
+    .filter(hasUsableFallbackValue)
+    .sort((left, right) => conditionFallbackRank(table, left) - conditionFallbackRank(table, right));
+
+  for (const condition of candidates) {
+    addSet([condition]);
+  }
+
+  return sets;
+}
+
+async function queryDocRowsByReducedConditions({ table, conditions, orders, limit }) {
+  for (const fallbackConditions of reducedConditionSets(table, conditions, orders.length > 0)) {
+    const query = buildQuery(db.collection(table), {
+      conditions: fallbackConditions,
+      orders: [],
+      limit: null,
+    });
+    if (query == null) continue;
+
+    try {
+      const snapshot = await query.get();
+      const docRows = snapshot.docs.map((doc) => ({
+        ref: doc.ref,
+        data: decodeDoc(table, doc),
+      }));
+      return filterAndSortDocRows(docRows, { conditions, orders, limit });
+    } catch (_error) {
+      // Try the next narrower server-side query before falling back to a scan.
+    }
+  }
+
+  return null;
 }
 
 function normalizeComparable(value) {
@@ -235,8 +366,8 @@ function filterAndSortRows(rows, { conditions = [], orders = [], limit = null })
     });
   }
 
-  const normalizedLimit = Number(limit);
-  if (Number.isInteger(normalizedLimit) && normalizedLimit >= 0) {
+  const normalizedLimit = normalizeLimit(limit);
+  if (normalizedLimit != null) {
     result = result.slice(0, normalizedLimit);
   }
   return result;
@@ -255,8 +386,8 @@ function filterAndSortDocRows(docRows, { conditions = [], orders = [], limit = n
     });
   }
 
-  const normalizedLimit = Number(limit);
-  if (Number.isInteger(normalizedLimit) && normalizedLimit >= 0) {
+  const normalizedLimit = normalizeLimit(limit);
+  if (normalizedLimit != null) {
     result = result.slice(0, normalizedLimit);
   }
   return result;
@@ -272,8 +403,21 @@ async function queryDocRows({ table, conditions, orders, limit }) {
       ref: doc.ref,
       data: decodeDoc(table, doc),
     }));
-    return filterAndSortDocRows(docRows, { conditions, orders, limit });
+    const filteredRows = filterAndSortDocRows(docRows, { conditions, orders, limit });
+    if (filteredRows.length > 0) return filteredRows;
+
+    const documentIdRows = await queryDocRowsByDocumentId({ table, conditions, orders, limit });
+    if (documentIdRows != null) return documentIdRows;
+
+    const reducedRows = await queryDocRowsByReducedConditions({ table, conditions, orders, limit });
+    return reducedRows ?? filteredRows;
   } catch (_error) {
+    const documentIdRows = await queryDocRowsByDocumentId({ table, conditions, orders, limit });
+    if (documentIdRows != null) return documentIdRows;
+
+    const reducedRows = await queryDocRowsByReducedConditions({ table, conditions, orders, limit });
+    if (reducedRows != null) return reducedRows;
+
     const snapshot = await db.collection(table).get();
     const docRows = snapshot.docs.map((doc) => ({
       ref: doc.ref,
@@ -492,6 +636,16 @@ router.post("/insert", (req, res) =>
     const row = prepareInsertData(table, req.body?.data ?? {});
     const requestedDocId = String(req.body?.docId ?? "").trim();
     const ref = db.collection(table).doc(requestedDocId || docIdForRow(table, row));
+    if (table === "business") {
+      const existingSnapshot = await ref.get();
+      if (existingSnapshot.exists) {
+        throw toHttpError(
+          409,
+          "firestore/business-already-exists",
+          "Recusando sobrescrever um business existente.",
+        );
+      }
+    }
     await ref.set(row);
     const snapshot = await ref.get();
     return { row: decodeDoc(table, snapshot) };
