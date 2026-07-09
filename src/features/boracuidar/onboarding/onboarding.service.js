@@ -2,6 +2,18 @@ import { db } from "../../../config/firebase.js";
 import { getDefaultServicesByBusinessType } from "./defaultServices.js";
 import crypto from "crypto";
 
+let lastGeneratedIntId = 0;
+
+function generateIntId() {
+  const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  if (candidate <= lastGeneratedIntId) {
+    lastGeneratedIntId += 1;
+    return lastGeneratedIntId;
+  }
+  lastGeneratedIntId = candidate;
+  return candidate;
+}
+
 export async function finalizeOnboarding({
   firebaseUser,
   forcedBusinessId,
@@ -14,6 +26,8 @@ export async function finalizeOnboarding({
 }) {
   const userUid = firebaseUser.uid;
   const userEmail = firebaseUser.email || email;
+  const normalizedWorkerEmail = String(userEmail || email || "").trim().toLowerCase();
+  const normalizedWorkerPhone = String(whatsapp || "").replace(/\D/g, "");
 
   // 1. Determine Business ID
   const businessId = forcedBusinessId || crypto.randomUUID();
@@ -76,51 +90,56 @@ export async function finalizeOnboarding({
   
   const serviceIds = [];
   for (const service of defaultServices) {
-    const serviceRef = db.collection("servicos").doc();
-    service.id = serviceRef.id;
-    service.created_at = now;
-    batch.set(serviceRef, service);
-    serviceIds.push(serviceRef.id);
+    const serviceId = generateIntId();
+    const serviceRef = db.collection("servicos").doc(String(serviceId));
+    batch.set(serviceRef, {
+      ...service,
+      id: serviceId,
+      created_at: now,
+    });
+    serviceIds.push(serviceId);
   }
 
   // 5. Create Worker Master
-  const workerRef = db.collection("trabalhadores").doc();
-  const workerId = workerRef.id;
+  const workerId = generateIntId();
+  const workerRef = db.collection("trabalhadores").doc(String(workerId));
   const workerData = {
     id: workerId,
     user_uid: userUid,
     business_id: businessId,
     nome: ownerName || null,
+    email: normalizedWorkerEmail || null,
+    telefone: normalizedWorkerPhone || null,
+    position: "Master",
     ativo: true,
     created_at: now,
   };
   batch.set(workerRef, workerData);
 
   // Default worker schedules
-  const defaultSchedule = {
-    seg: { check: true, start: "09:00", end: "18:00" },
-    ter: { check: true, start: "09:00", end: "18:00" },
-    qua: { check: true, start: "09:00", end: "18:00" },
-    qui: { check: true, start: "09:00", end: "18:00" },
-    sex: { check: true, start: "09:00", end: "18:00" },
-    sab: { check: true, start: "09:00", end: "12:00" },
-    dom: { check: false, start: "09:00", end: "18:00" },
-  };
-
-  const scheduleRef = db.collection("horarios_padrao").doc();
-  batch.set(scheduleRef, {
-    id: scheduleRef.id,
-    business_id: businessId,
-    trabalhador_id: workerId,
-    horarios: defaultSchedule,
-    created_at: now,
-  });
+  for (let i = 0; i <= 6; i++) {
+    const scheduleId = generateIntId();
+    const scheduleRef = db.collection("horarios_padrao").doc(String(scheduleId));
+    batch.set(scheduleRef, {
+      id: scheduleId,
+      business_id: businessId,
+      trabalhador_id: workerId,
+      dia_semana: i,
+      hora_inicio: "08:00:00",
+      hora_fim: "19:00:00",
+      intervalo_inicio: "12:00:00",
+      intervalo_fim: "13:00:00",
+      ativo: true,
+      created_at: now,
+    });
+  }
 
   // Link worker to services
   for (const serviceId of serviceIds) {
-    const workerServiceRef = db.collection("trabalhador_servico").doc();
+    const workerServiceId = generateIntId();
+    const workerServiceRef = db.collection("trabalhador_servico").doc(String(workerServiceId));
     batch.set(workerServiceRef, {
-      id: workerServiceRef.id,
+      id: workerServiceId,
       trabalhador_id: workerId,
       servico_id: serviceId,
       ativo: true,
