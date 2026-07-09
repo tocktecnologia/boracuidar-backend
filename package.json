@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "deploy": "gcloud run deploy boracuidar-booking-api --source . --project agenda-tock --region us-central1 --allow-unauthenticated --quiet"
   },
   "engines": {
     "node": ">=20"

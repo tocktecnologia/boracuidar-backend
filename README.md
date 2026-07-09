@@ -71,11 +71,27 @@ Essas rotas exigem `Authorization: Bearer <firebase_id_token>`.
 
 ## Deploy no Cloud Run
 
+O backend de producao roda no Cloud Run do projeto Firebase/Google Cloud `agenda-tock`.
+
+URL de producao:
+
 ```bash
-gcloud run deploy boracuidar-booking-api ^
-  --source . ^
-  --region us-central1 ^
-  --allow-unauthenticated
+https://boracuidar-booking-api-282314346925.us-central1.run.app
+```
+
+Para fazer um novo deploy pelo terminal, autentique no Google Cloud, entre na pasta do backend e rode:
+
+```bash
+gcloud auth login
+gcloud config set project agenda-tock
+cd "D:\TOCK\Bora Cuidar\webapp\boracuidar-backend"
+npm run deploy
+```
+
+Depois do deploy, confira se a API respondeu:
+
+```powershell
+Invoke-WebRequest -Uri "https://boracuidar-booking-api-282314346925.us-central1.run.app/health" -UseBasicParsing
 ```
 
 O service account do Cloud Run precisa ter permissao de leitura/escrita no Firestore.
