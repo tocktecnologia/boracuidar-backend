@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 
+import boracuidarBusinessPageRoutes from "./features/boracuidar/business-page/business-page.routes.js";
 import boracuidarFirestoreRoutes from "./features/boracuidar/firestore/firestore.routes.js";
 import boracuidarOnboardingRoutes from "./features/boracuidar/onboarding/onboarding.routes.js";
 import bookingRoutes from "./features/boracuidar-web/bookings/booking.routes.js";
@@ -23,6 +24,7 @@ export function createApp() {
 
   app.use("/api/bookings", bookingRoutes);
   app.use("/api/boracuidar-web/bookings", bookingRoutes);
+  app.use("/api/boracuidar/business-page", boracuidarBusinessPageRoutes);
   app.use("/api/boracuidar/firestore", boracuidarFirestoreRoutes);
   app.use("/api/boracuidar/onboarding", boracuidarOnboardingRoutes);
 

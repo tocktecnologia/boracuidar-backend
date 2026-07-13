@@ -38,6 +38,12 @@ export async function finalizeOnboarding({
 
   // 1. Insert into 'business' collection
   const businessRef = db.collection("business").doc(businessId);
+  const existingBusinessSnapshot = await businessRef.get();
+  const existingBusinessData = existingBusinessSnapshot.exists
+    ? existingBusinessSnapshot.data() ?? {}
+    : {};
+  const businessIsActive = existingBusinessData.ativo === false ? false : true;
+
   batch.set(
     businessRef,
     {
@@ -46,6 +52,7 @@ export async function finalizeOnboarding({
       email: email || null,
       phone_number: whatsapp || null,
       subscription_type: subscription || "GRATUITO",
+      ativo: businessIsActive,
       created_at: now,
       updated_at: now,
     },
